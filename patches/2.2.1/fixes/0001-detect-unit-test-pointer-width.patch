@@ -1,0 +1,21 @@
+From 654fa71717ba66383153e5fd751b8ff3eb44de47 Mon Sep 17 00:00:00 2001
+From: Sheng <hsdai22@m.fudan.edu.cn>
+Date: Thu, 22 Oct 2026 23:37:03 +0800
+Subject: [PATCH] test: Detect pointer width on all GNU compiler targets
+
+
+Upstream-PR: https://github.com/lwip-tcpip/lwip/pull/112
+Backport-to: lwIP 2.2.1
+
+---
+--- a/test/unit/lwipopts.h
++++ b/test/unit/lwipopts.h
+@@ -99,7 +99,7 @@
+ #define PTR32
+ #endif
+ #elif defined(__GNUC__)
+-#if defined(__x86_64__) || defined(__ppc64__)
++#if __SIZEOF_POINTER__ > 4
+ #define PTR64
+ #else
+ #define PTR32
