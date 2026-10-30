@@ -1,0 +1,39 @@
+From 4c3099f3c57a8dbba1a04589f78bc88fe1ddcb29 Mon Sep 17 00:00:00 2001
+From: Florian Schmidt <florian.schmidt@neclab.eu>
+Date: Thu, 22 Oct 2026 18:31:40 +0800
+Subject: [PATCH] Don't provide file status flags when we have a libc
+
+Rebased Unikraft adaptation for lwIP 2.2.1; retain native-aware upstream address bounds.
+---
+ src/include/lwip/sockets.h | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/include/lwip/sockets.h b/src/include/lwip/sockets.h
+index b6f3d524..341140c4 100644
+--- a/src/include/lwip/sockets.h
++++ b/src/include/lwip/sockets.h
+@@ -39,6 +39,8 @@
+ #ifndef LWIP_HDR_SOCKETS_H
+ #define LWIP_HDR_SOCKETS_H
+ 
++#include <uk/config.h>
++
+ #include "lwip/opt.h"
+ 
+ #if LWIP_SOCKET /* don't build if not configured for use in lwipopts.h */
+@@ -447,6 +449,7 @@ typedef struct ipv6_mreq {
+ #define F_SETFL 4
+ #endif
+ 
++#ifndef CONFIG_HAVE_LIBC
+ /* File status flags and file access modes for fnctl,
+    these are bits in an int. */
+ #ifndef O_NONBLOCK
+@@ -464,6 +467,7 @@ typedef struct ipv6_mreq {
+ #ifndef O_RDWR
+ #define O_RDWR      (O_RDONLY|O_WRONLY)
+ #endif
++#endif /* CONFIG_HAVE_LIBC */
+ 
+ #ifndef SHUT_RD
+   #define SHUT_RD   0

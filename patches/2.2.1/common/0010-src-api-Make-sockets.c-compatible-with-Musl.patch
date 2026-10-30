@@ -1,0 +1,50 @@
+From a8d38f09ca15dfb0253676b90feff92f85633920 Mon Sep 17 00:00:00 2001
+From: Razvan Deaconescu <razvand@unikraft.io>
+Date: Thu, 22 Oct 2026 18:31:41 +0800
+Subject: [PATCH] src/api: Make sockets.c compatible with Musl
+
+Rebased Unikraft adaptation for lwIP 2.2.1; retain native-aware upstream address bounds.
+---
+ src/api/sockets.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/api/sockets.c b/src/api/sockets.c
+index 800926d2..bb685c99 100644
+--- a/src/api/sockets.c
++++ b/src/api/sockets.c
+@@ -37,6 +37,8 @@
+  *
+  */
+ 
++#define _BSD_SOURCE
++
+ #include <sys/time.h>
+ 
+ #include "lwip/opt.h"
+@@ -65,6 +67,8 @@
+ #endif
+ 
+ #include <string.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
+ 
+ #ifdef LWIP_HOOK_FILENAME
+ #include LWIP_HOOK_FILENAME
+@@ -132,8 +136,8 @@
+ #endif /* LWIP_SOCKET_HAVE_SA_LEN */
+ 
+ #if LWIP_IPV4
++#define SIN_ZERO_LEN 8
+ #define IP4ADDR_PORT_TO_SOCKADDR(sin, ipaddr, port) do { \
+-      IP4ADDR_SOCKADDR_SET_LEN(sin); \
+       (sin)->sin_family = AF_INET; \
+       (sin)->sin_port = lwip_htons((port)); \
+       inet_addr_from_ip4addr(&(sin)->sin_addr, ipaddr); \
+@@ -145,7 +149,6 @@
+ 
+ #if LWIP_IPV6
+ #define IP6ADDR_PORT_TO_SOCKADDR(sin6, ipaddr, port) do { \
+-      IP6ADDR_SOCKADDR_SET_LEN(sin6); \
+       (sin6)->sin6_family = AF_INET6; \
+       (sin6)->sin6_port = lwip_htons((port)); \
+       (sin6)->sin6_flowinfo = 0; \

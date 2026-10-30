@@ -5,3 +5,5 @@ license     := "BSD-3-Clause"
 version     := 2.1.x sha256:544d82aa663165dcecb6626b00035f6d7fe0b8d39d3eec63a8635be8aa8f5d62 https://github.com/unikraft/fork-lwip/archive/STABLE-2_1_x.tar.gz
 version     += 2.1.2 sha256:c6b10d0f5392d507f27a5a79bc43e706cb20df66bba86da56f557a53b68f2da8 https://github.com/unikraft/fork-lwip/archive/STABLE-2_1_2_RELEASE.tar.gz
 version     += 2.1.x-unikraft sha256:478d5aab535444de2f71debb212b1d1574be69f1f889fcb2becf251db62e87f2 https://github.com/unikraft/fork-lwip/archive/UNIKRAFT-2_1_x.tar.gz
+version     += 2.1.x-pinned sha256:0e7de8cd81d29194b6eb587968d11b9d30f74f0230351e63a4178a72cd307cac https://github.com/unikraft/fork-lwip/archive/bef26c44236a078d4352e76392ef16f019bea501.zip
+version     += 2.2.1 sha256:e09bf3518f1d23204cdd38203e1bdbbb5c634a1dce8dde487b7eaca3f2407245 https://github.com/lwip-tcpip/lwip/archive/77dcd25a72509eb83f72b033d219b1d40cd8eb95.zip

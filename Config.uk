@@ -43,6 +43,17 @@ config LWIP_UNIKRAFT21X
 		recent bugfixes and security patches, and includes
 		latest features developed by the Unikraft community
 		that are currently upstreamed to lwIP.
+config LWIP_PINNED21X
+	bool "Pinned Unikraft 2.1.x (HTTP/3 qualification snapshot)"
+	help
+	  Fetch the immutable fork-lwip commit recorded in Makefile.uk.
+	  The additional socket/TCP correctness patches target this snapshot.
+	  This option does not replace the other version choices.
+config LWIP_PINNED22X
+	bool "Pinned upstream release 2.2.1"
+	help
+	  Fetch the immutable upstream 2.2.1 release commit.
+	  Apply the native libc integration and socket/TCP fixes for this release.
 endchoice
 
 menu "Netif drivers"
@@ -406,3 +417,29 @@ config LWIP_SERVICE_DEBUG
 		ICMP_DEBUG, SNMP_DEBUG, SNMP_MSG_DEBUG, SNMP_MIB_DEBUG
 endif
 endif
+
+config LWIP_NETBUF_RECVINFO
+	bool "Receive UDP destination metadata"
+	depends on LIBLWIP && LWIP_SOCKET && (LWIP_PINNED21X || LWIP_PINNED22X)
+	default n
+	help
+	  Retain destination addresses for recvmsg ancillary data. The setting
+	  is exported through lwipopts.h to keep netbuf layout consistent.
+
+config LWIP_UKNETDEV_DEFER_STATUS_RX
+	bool "Defer status-callback receive work to the RX dispatcher"
+	depends on LIBLWIP && LWIP_UKNETDEV && LWIP_THREADS
+	depends on LIBUKNETDEV_DISPATCHERTHREADS && !LWIP_UKNETDEV_POLLONLY
+	default y
+	help
+	  A callback in tcpip_thread must not fill its own receive mailbox.
+	  Wake the existing RX dispatcher to perform the initial queue drain.
+
+config LWIP_TCP_ACK_DELAY_MS
+	int "Independent delayed TCP ACK deadline (ms; 0 disables)"
+	depends on LIBLWIP && LWIP_TCP && LWIP_THREADS && (LWIP_PINNED21X || LWIP_PINNED22X)
+	range 0 249
+	default 0
+	help
+	  An optional deadline below the 250 ms fast timer. This is a TCP
+	  setting, independent of QUIC timers. The HTTP/3 application uses 50.

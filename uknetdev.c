@@ -197,6 +197,13 @@ static err_t uknetdev_output(struct netif *nf, struct pbuf *p)
 	return ERR_OK;
 }
 
+#if CONFIG_LWIP_UKNETDEV_DEFER_STATUS_RX
+#if !CONFIG_LWIP_THREADS || !CONFIG_LIBUKNETDEV_DISPATCHERTHREADS || CONFIG_LWIP_UKNETDEV_POLLONLY
+#error Deferred status RX requires lwIP threads and netdev dispatcher threads
+#endif
+#include <uk/netdev_driver.h>
+#endif
+
 static void uknetdev_input(struct uk_netdev *dev,
 			   uint16_t queue_id __unused, void *argp)
 {
@@ -386,7 +393,15 @@ static void uknetdev_updown(struct netif *nf)
 				 * interrupts are enabled. For this purpose
 				 * we do an initial poll.
 				 */
+#if CONFIG_LWIP_UKNETDEV_DEFER_STATUS_RX
+				/* A status notification may run in tcpip_thread itself.
+				 * Wake the RX dispatcher instead of queuing packets back
+				 * into that same thread's mailbox while it cannot drain.
+				 */
+				uk_netdev_drv_rx_event(dev, 0);
+#else
 				uknetdev_poll(nf);
+#endif
 			}
 		} else {
 #ifdef CONFIG_HAVE_SCHED
@@ -590,24 +605,11 @@ err_t uknetdev_init(struct netif *nf)
 		     __func__, nf->name[0], nf->name[1], nf->num, nf->flags));
 
 #if LWIP_CHECKSUM_CTRL_PER_NETIF
-	/*
-	 * Checksum settings
-	 * TODO: libuknetdev does not support checksum capabilities yet.
-	 *       Because of this, we need to calculate the checksum for every
-	 *       outgoing packet in software. We assume that we receive packets
-	 *       from a virtual interface, so the host was doing a check for us
-	 *       already. In case of guest-to-guest communication, the checksum
-	 *       field may be incorrect because the other guest expects that the
-	 *       host is offloading the calculation to hardware as soon as a
-	 *       packet leaves the physical host machine. At this point, the
-	 *       best we can do is not to check any checksums on incoming
-	 *       traffic and assume everything is fine.
+	/* This adapter does not consume RX checksum-offload metadata. Require
+	 * complete wire checksums and verify incoming packets in software.
+	 * Partial-checksum/GSO input must be disabled at the device boundary.
 	 */
-	NETIF_SET_CHECKSUM_CTRL(nf, (NETIF_CHECKSUM_GEN_IP
-				     | NETIF_CHECKSUM_GEN_UDP
-				     | NETIF_CHECKSUM_GEN_TCP
-				     | NETIF_CHECKSUM_GEN_ICMP
-				     | NETIF_CHECKSUM_GEN_ICMP6));
+	NETIF_SET_CHECKSUM_CTRL(nf, NETIF_CHECKSUM_ENABLE_ALL);
 	LWIP_DEBUGF(NETIF_DEBUG,
 		    ("%s: %c%c%u: chksum_flags: %"PRIx16"\n",
 		     __func__, nf->name[0], nf->name[1], nf->num,

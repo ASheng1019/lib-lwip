@@ -1,0 +1,23 @@
+From 22ed900d84d604d98034bb8a0f33c83780bf457c Mon Sep 17 00:00:00 2001
+From: Sheng <hsdai22@m.fudan.edu.cn>
+Date: Thu, 22 Oct 2026 18:31:40 +0800
+Subject: [PATCH] 0001-timeval-for-socket-c
+
+Rebased Unikraft adaptation for lwIP 2.2.1; retain native-aware upstream address bounds.
+---
+ src/api/sockets.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/api/sockets.c b/src/api/sockets.c
+index b97bdd7e..828fd9f1 100644
+--- a/src/api/sockets.c
++++ b/src/api/sockets.c
+@@ -37,6 +37,8 @@
+  *
+  */
+ 
++#include <sys/time.h>
++
+ #include "lwip/opt.h"
+ 
+ #if LWIP_SOCKET /* don't build if not configured for use in lwipopts.h */

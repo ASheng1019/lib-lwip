@@ -41,7 +41,15 @@ $(eval $(call addlib_s,liblwip,$(CONFIG_LIBLWIP)))
 ################################################################################
 # Sources
 ################################################################################
-ifeq ($(CONFIG_LWIP_UNIKRAFT21X),y)
+ifeq ($(CONFIG_LWIP_PINNED22X),y)
+LIBLWIP_URL := https://github.com/lwip-tcpip/lwip/archive/77dcd25a72509eb83f72b033d219b1d40cd8eb95.zip
+LIBLWIP_ZIPNAME := lwip-77dcd25a72509eb83f72b033d219b1d40cd8eb95
+LIBLWIP_ORIGIN_SHA256 := e09bf3518f1d23204cdd38203e1bdbbb5c634a1dce8dde487b7eaca3f2407245
+else ifeq ($(CONFIG_LWIP_PINNED21X),y)
+LIBLWIP_URL := https://github.com/unikraft/fork-lwip/archive/bef26c44236a078d4352e76392ef16f019bea501.zip
+LIBLWIP_ZIPNAME := fork-lwip-bef26c44236a078d4352e76392ef16f019bea501
+LIBLWIP_ORIGIN_SHA256 := 0e7de8cd81d29194b6eb587968d11b9d30f74f0230351e63a4178a72cd307cac
+else ifeq ($(CONFIG_LWIP_UNIKRAFT21X),y)
 LIBLWIP_BRANCH=UNIKRAFT-2_1_x
 LIBLWIP_ZIPNAME=fork-lwip-$(LIBLWIP_BRANCH)
 LIBLWIP_URL=https://github.com/unikraft/fork-lwip/archive/refs/heads/$(LIBLWIP_BRANCH).zip
@@ -56,7 +64,11 @@ LIBLWIP_URL=https://github.com/unikraft/fork-lwip/archive/refs/tags/$(LIBLWIP_TA
 LIBLWIP_ORIGIN_SHA256=8f0ae46e2702720ce852b00de5d304adb2809b0203741f299876594bb8be7890
 endif
 
-LIBLWIP_PATCHDIR=$(LIBLWIP_BASE)/patches
+ifeq ($(CONFIG_LWIP_PINNED22X),y)
+LIBLWIP_PATCHDIR := $(LIBLWIP_BASE)/patches/2.2.1/common
+else
+LIBLWIP_PATCHDIR := $(LIBLWIP_BASE)/patches/common
+endif
 $(eval $(call fetch,liblwip,$(LIBLWIP_URL)))
 $(eval $(call patch,liblwip,$(LIBLWIP_PATCHDIR),$(LIBLWIP_ZIPNAME)))
 
@@ -138,6 +150,9 @@ LIBLWIP_SRCS-$(CONFIG_LWIP_UKNETDEV) += $(LIBLWIP_BASE)/uknetdev.c|unikraft
 ################################################################################
 # IPv4
 ################################################################################
+ifeq ($(CONFIG_LWIP_PINNED22X),y)
+LIBLWIP_SRCS-$(CONFIG_LWIP_IPV4)    += $(LIBLWIP_EXTRACTED)/core/ipv4/acd.c
+endif
 LIBLWIP_SRCS-$(CONFIG_LWIP_IPV4)    += $(LIBLWIP_EXTRACTED)/core/ipv4/etharp.c
 LIBLWIP_SRCS-$(CONFIG_LWIP_IPV4)    += $(LIBLWIP_EXTRACTED)/core/ipv4/ip4_frag.c
 LIBLWIP_SRCS-$(CONFIG_LWIP_IPV4)    += $(LIBLWIP_EXTRACTED)/core/ipv4/ip4.c
@@ -157,3 +172,22 @@ LIBLWIP_SRCS-$(CONFIG_LWIP_IPV6) += $(LIBLWIP_EXTRACTED)/core/ipv6/ip6_addr.c
 LIBLWIP_SRCS-$(CONFIG_LWIP_IPV6) += $(LIBLWIP_EXTRACTED)/core/ipv6/ip6_frag.c
 LIBLWIP_SRCS-$(CONFIG_LWIP_IPV6) += $(LIBLWIP_EXTRACTED)/core/ipv6/mld6.c
 LIBLWIP_SRCS-$(CONFIG_LWIP_IPV6) += $(LIBLWIP_EXTRACTED)/core/ipv6/nd6.c
+
+
+# Apply generic upstream fixes separately from Unikraft-specific adaptations.
+# Remove a fix only when the selected source version already contains it.
+ifneq ($(filter y,$(CONFIG_LWIP_PINNED21X) $(CONFIG_LWIP_PINNED22X)),)
+ifeq ($(CONFIG_LWIP_PINNED22X),y)
+LIBLWIP_FIX_PATCHDIR := $(LIBLWIP_BASE)/patches/2.2.1/fixes
+LIBLWIP_PINNED_PATCHDIR := $(LIBLWIP_BASE)/patches/2.2.1/native
+else
+LIBLWIP_PINNED_PATCHDIR := $(LIBLWIP_BASE)/patches/pinned-2.1
+endif
+LIBLWIP_PINNED_PATCHES := $(if $(LIBLWIP_FIX_PATCHDIR),$(sort $(wildcard $(LIBLWIP_FIX_PATCHDIR)/*.patch))) $(sort $(wildcard $(LIBLWIP_PINNED_PATCHDIR)/*))
+$(LIBLWIP_BUILD)/.pinned-patched: $(LIBLWIP_BUILD)/.patched
+	@$(foreach P,$(LIBLWIP_PINNED_PATCHES), \
+	  $(call verbose_cmd_inner,PATCH,liblwip: $(notdir $(P)), \
+	    $(PATCH) --fuzz=0 -sd $(LIBLWIP_ORIGIN)/$(LIBLWIP_ZIPNAME) -p1 < $(P)) &&)\
+	$(TOUCH) $@
+UK_FETCH-y += $(LIBLWIP_BUILD)/.pinned-patched
+endif

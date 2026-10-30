@@ -1,0 +1,22 @@
+From a3670bbecebc6cc3d1ac71c10ce56558b4757799 Mon Sep 17 00:00:00 2001
+From: Sheng <hsdai22@m.fudan.edu.cn>
+Date: Thu, 22 Oct 2026 18:31:40 +0800
+Subject: [PATCH] 0004-src-include-lwip-sockets.h-Add-ipi_spec_dst-field-to
+
+Rebased Unikraft adaptation for lwIP 2.2.1; retain native-aware upstream address bounds.
+---
+ src/include/lwip/sockets.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/include/lwip/sockets.h b/src/include/lwip/sockets.h
+index 341140c4..0c4f124d 100644
+--- a/src/include/lwip/sockets.h
++++ b/src/include/lwip/sockets.h
+@@ -336,6 +336,7 @@ typedef struct ip_mreq {
+ #if LWIP_IPV4
+ struct in_pktinfo {
+   unsigned int   ipi_ifindex;  /* Interface index */
++  struct in_addr ipi_spec_dst;	/* Routing destination address  */
+   struct in_addr ipi_addr;     /* Destination (from header) address */
+ };
+ #endif /* LWIP_IPV4 */
