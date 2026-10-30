@@ -1,0 +1,72 @@
+Subject: Report family-specific socket address lengths with bounded copies
+Target: unikraft/lib-lwip (musl socket adaptation)
+Base: fork-lwip bef26c44236a078d4352e76392ef16f019bea501 plus common port series
+Status: Local candidate; not submitted.
+
+--- a/src/api/sockets.c
++++ b/src/api/sockets.c
+@@ -702,10 +702,10 @@
+     }
+ 
+     IPADDR_PORT_TO_SOCKADDR(&tempaddr, &naddr, port);
+-    if (*addrlen > sizeof(*addr)) {
+-      *addrlen = sizeof(*addr);
+-    }
+-    MEMCPY(addr, &tempaddr, *addrlen);
++    socklen_t actual = IP_IS_V6(&naddr) ? sizeof(struct sockaddr_in6)
++                                        : sizeof(struct sockaddr_in);
++    MEMCPY(addr, &tempaddr, LWIP_MIN(*addrlen, actual));
++    *addrlen = actual;
+ 
+     LWIP_DEBUGF(SOCKETS_DEBUG, ("lwip_accept(%d) returning new sock=%d addr=", s, newsock));
+     ip_addr_debug_print_val(SOCKETS_DEBUG, naddr);
+@@ -1047,12 +1047,12 @@
+ #endif /* LWIP_IPV4 && LWIP_IPV6 */
+ 
+   IPADDR_PORT_TO_SOCKADDR(&saddr, fromaddr, port);
+-  if (*fromlen < sizeof(*from)) {
+-    truncated = 1;
+-  } else {
+-    *fromlen = sizeof(*from);
+-  }
+-  MEMCPY(from, &saddr, *fromlen);
++  socklen_t actual = IP_IS_V6(fromaddr) ? sizeof(struct sockaddr_in6)
++                                        : sizeof(struct sockaddr_in);
++  socklen_t copied = LWIP_MIN(*fromlen, actual);
++  truncated = (*fromlen < actual);
++  MEMCPY(from, &saddr, copied);
++  *fromlen = actual;
+   return truncated;
+ }
+ 
+@@ -1145,13 +1145,13 @@
+ 
+   /* Check to see from where the data was.*/
+ #if !SOCKETS_DEBUG
+-  if (msg->msg_name && msg->msg_namelen)
++  if (msg->msg_name)
+ #endif /* !SOCKETS_DEBUG */
+   {
+     LWIP_DEBUGF(SOCKETS_DEBUG, ("lwip_recvfrom_udp_raw(%d):  addr=", dbg_s));
+     ip_addr_debug_print_val(SOCKETS_DEBUG, *netbuf_fromaddr(buf));
+     LWIP_DEBUGF(SOCKETS_DEBUG, (" port=%"U16_F" len=%d\n", netbuf_fromport(buf), copied));
+-    if (msg->msg_name && msg->msg_namelen) {
++    if (msg->msg_name) {
+       lwip_sock_make_addr(sock->conn, netbuf_fromaddr(buf), netbuf_fromport(buf),
+                           (struct sockaddr *)msg->msg_name, &msg->msg_namelen);
+     }
+@@ -2749,10 +2749,10 @@
+   ip_addr_debug_print_val(SOCKETS_DEBUG, naddr);
+   LWIP_DEBUGF(SOCKETS_DEBUG, (" port=%"U16_F")\n", port));
+ 
+-  if (*namelen > sizeof(*name)) {
+-    *namelen = sizeof(*name);
+-  }
+-  MEMCPY(name, &saddr, *namelen);
++  socklen_t actual = IP_IS_V6(&naddr) ? sizeof(struct sockaddr_in6)
++                                      : sizeof(struct sockaddr_in);
++  MEMCPY(name, &saddr, LWIP_MIN(*namelen, actual));
++  *namelen = actual;
+ 
+   sock_set_errno(sock, 0);
+   done_socket(sock);

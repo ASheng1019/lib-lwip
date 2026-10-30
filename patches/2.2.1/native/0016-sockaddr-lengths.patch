@@ -1,0 +1,76 @@
+From affee0beb163ccb73404e90910a47b5e75a1ce59 Mon Sep 17 00:00:00 2001
+From: Sheng <hsdai22@m.fudan.edu.cn>
+Date: Thu, 22 Oct 2026 18:33:28 +0800
+Subject: [PATCH] Report family-specific socket address lengths with bounded
+ copies
+
+Port integration for upstream lwIP 2.2.1. Generic fixes are developed and tested on the independent upstream fork.
+---
+ src/api/sockets.c | 28 ++++++++++++----------------
+ 1 file changed, 12 insertions(+), 16 deletions(-)
+
+diff --git a/src/api/sockets.c b/src/api/sockets.c
+index 4d652bc0..8bdf62e7 100644
+--- a/src/api/sockets.c
++++ b/src/api/sockets.c
+@@ -722,10 +722,9 @@ lwip_accept(int s, struct sockaddr *addr, socklen_t *addrlen)
+     }
+ 
+     IPADDR_PORT_TO_SOCKADDR(&tempaddr, &naddr, port);
+-    if (*addrlen > IPADDR_SOCKADDR_GET_LEN(&tempaddr)) {
+-      *addrlen = IPADDR_SOCKADDR_GET_LEN(&tempaddr);
+-    }
+-    MEMCPY(addr, &tempaddr, *addrlen);
++    socklen_t actual = IPADDR_SOCKADDR_GET_LEN(&tempaddr);
++    MEMCPY(addr, &tempaddr, LWIP_MIN(*addrlen, actual));
++    *addrlen = actual;
+   }
+ 
+   /* See event_callback: If data comes in right away after an accept, even
+@@ -1088,12 +1087,10 @@ lwip_sock_make_addr(struct netconn *conn, ip_addr_t *fromaddr, u16_t port,
+ #endif /* LWIP_IPV4 && LWIP_IPV6 */
+ 
+   IPADDR_PORT_TO_SOCKADDR(&saddr, fromaddr, port);
+-  if (*fromlen < IPADDR_SOCKADDR_GET_LEN(&saddr)) {
+-    truncated = 1;
+-  } else if (*fromlen > IPADDR_SOCKADDR_GET_LEN(&saddr)) {
+-    *fromlen = IPADDR_SOCKADDR_GET_LEN(&saddr);
+-  }
+-  MEMCPY(from, &saddr, *fromlen);
++  socklen_t actual = IPADDR_SOCKADDR_GET_LEN(&saddr);
++  truncated = (*fromlen < actual);
++  MEMCPY(from, &saddr, LWIP_MIN(*fromlen, actual));
++  *fromlen = actual;
+   return truncated;
+ }
+ 
+@@ -1186,13 +1183,13 @@ lwip_recvfrom_udp_raw(struct lwip_sock *sock, int flags, struct msghdr *msg, u16
+ 
+   /* Check to see from where the data was.*/
+ #if !SOCKETS_DEBUG
+-  if (msg->msg_name && msg->msg_namelen)
++  if (msg->msg_name)
+ #endif /* !SOCKETS_DEBUG */
+   {
+     LWIP_DEBUGF(SOCKETS_DEBUG, ("lwip_recvfrom_udp_raw(%d):  addr=", dbg_s));
+     ip_addr_debug_print_val(SOCKETS_DEBUG, *netbuf_fromaddr(buf));
+     LWIP_DEBUGF(SOCKETS_DEBUG, (" port=%"U16_F" len=%d\n", netbuf_fromport(buf), copied));
+-    if (msg->msg_name && msg->msg_namelen) {
++    if (msg->msg_name) {
+       lwip_sock_make_addr(sock->conn, netbuf_fromaddr(buf), netbuf_fromport(buf),
+                           (struct sockaddr *)msg->msg_name, &msg->msg_namelen);
+     }
+@@ -2790,10 +2787,9 @@ lwip_getaddrname(int s, struct sockaddr *name, socklen_t *namelen, u8_t local)
+   ip_addr_debug_print_val(SOCKETS_DEBUG, naddr);
+   LWIP_DEBUGF(SOCKETS_DEBUG, (" port=%"U16_F")\n", port));
+ 
+-  if (*namelen > IPADDR_SOCKADDR_GET_LEN(&saddr)) {
+-    *namelen = IPADDR_SOCKADDR_GET_LEN(&saddr);
+-  }
+-  MEMCPY(name, &saddr, *namelen);
++  socklen_t actual = IPADDR_SOCKADDR_GET_LEN(&saddr);
++  MEMCPY(name, &saddr, LWIP_MIN(*namelen, actual));
++  *namelen = actual;
+ 
+   set_errno(0);
+   done_socket(sock);
