@@ -1,0 +1,34 @@
+From 40cc91ffdb441defbc495592280ce13f574473b0 Mon Sep 17 00:00:00 2001
+From: Sheng <hsdai22@m.fudan.edu.cn>
+Date: Thu, 22 Oct 2026 18:34:17 +0800
+Subject: [PATCH] Refresh persistent readability after partial TCP receives
+
+Unikraft integration on lwIP 2.2.1, retaining upstream IPV6_CHECKSUM handling and native-aware address bounds.
+---
+ src/api/sockets.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/src/api/sockets.c b/src/api/sockets.c
+index b328fcf4..4d0728fa 100644
+--- a/src/api/sockets.c
++++ b/src/api/sockets.c
+@@ -1066,6 +1066,19 @@ lwip_recv_tcp_done:
+     /* ensure window update after copying all data */
+     netconn_tcp_recvd(sock->conn, (size_t)recvd);
+   }
++#if LWIP_SOCKET_SELECT || LWIP_SOCKET_POLL
++  /* The netconn dequeue callback runs before lastdata is installed or
++     shortened above. Refresh the Unikraft socket level after that update:
++     unread bytes retained in lastdata must remain readable, and draining
++     the last pbuf must clear readability. No new TCP packet is required
++     to notify an application waiting in a persistent epoll instance. */
++  {
++    SYS_ARCH_DECL_PROTECT(lev);
++    SYS_ARCH_PROTECT(lev);
++    lwip_posix_socket_event_callback(sock, NETCONN_EVT_RCVMINUS, 0);
++    SYS_ARCH_UNPROTECT(lev);
++  }
++#endif
+   set_errno(0);
+   return recvd;
+ }

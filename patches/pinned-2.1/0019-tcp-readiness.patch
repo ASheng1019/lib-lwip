@@ -1,0 +1,27 @@
+Subject: Refresh persistent readability after partial TCP receives
+Target: unikraft/lib-lwip eventpoll integration (requires common/0006-eventpoll.patch)
+Base: fork-lwip bef26c44236a078d4352e76392ef16f019bea501 after common port patches
+Status: Local independent patch; not submitted upstream.
+
+--- a/src/api/sockets.c
++++ b/src/api/sockets.c
+@@ -1026,6 +1026,19 @@
+     /* ensure window update after copying all data */
+     netconn_tcp_recvd(sock->conn, (size_t)recvd);
+   }
++#if LWIP_SOCKET_SELECT || LWIP_SOCKET_POLL
++  /* The netconn dequeue callback runs before lastdata is installed or
++     shortened above. Refresh the Unikraft socket level after that update:
++     unread bytes retained in lastdata must remain readable, and draining
++     the last pbuf must clear readability. No new TCP packet is required
++     to notify an application waiting in a persistent epoll instance. */
++  {
++    SYS_ARCH_DECL_PROTECT(lev);
++    SYS_ARCH_PROTECT(lev);
++    lwip_posix_socket_event_callback(sock, NETCONN_EVT_RCVMINUS, 0);
++    SYS_ARCH_UNPROTECT(lev);
++  }
++#endif
+   sock_set_errno(sock, 0);
+   return recvd;
+ }
