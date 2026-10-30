@@ -1,0 +1,171 @@
+From: Sheng <hsdai22@m.fudan.edu.cn>
+Subject: [PATCH] Honor UDP DF requests and return EMSGSIZE consistently
+
+Unikraft socket adaptation: retain DF across separate UDP header allocation;
+report interface-MTU violations for sendmsg and sendto. Base: lwIP 2.2.1
+after native0017.
+
+diff --git a/src/api/api_msg.c b/src/api/api_msg.c
+index 252f39e..5bb2997 100644
+--- a/src/api/api_msg.c
++++ b/src/api/api_msg.c
+@@ -729,6 +729,7 @@ netconn_alloc(enum netconn_type t, netconn_callback callback)
+   conn->type = t;
+ #if LWIP_NETBUF_RECVINFO
+   conn->recv_tos = 0;
++  conn->dontfrag = 0;
+ #endif
+   conn->pcb.tcp = NULL;
+ #if LWIP_NETCONN_FULLDUPLEX
+@@ -1565,7 +1566,8 @@ lwip_netconn_do_send(void *m)
+ #if LWIP_UDP
+         case NETCONN_UDP:
+ #if LWIP_NETBUF_RECVINFO
+-          if ((msg->msg.b->flags & (NETBUF_FLAG_TXINFO | NETBUF_FLAG_TXTOS))) {
++          if ((msg->msg.b->flags & (NETBUF_FLAG_TXINFO | NETBUF_FLAG_TXTOS)) ||
++              msg->conn->dontfrag) {
+             struct netbuf *buf = msg->msg.b;
+             struct udp_pcb *pcb = msg->conn->pcb.udp;
+             struct netif *nf = NULL;
+@@ -1618,6 +1620,14 @@ lwip_netconn_do_send(void *m)
+               err = ERR_RTE;
+               break;
+             }
++            if (msg->conn->dontfrag && nf &&
++                buf->p->tot_len + (IP_IS_V6(dest) ? 48 : 28) > nf->mtu) {
++              buf->flags |= NETBUF_FLAG_TXSIZE;
++              err = ERR_BUF;
++              break;
++            }
++            if (msg->conn->dontfrag)
++              buf->p->flags |= PBUF_FLAG_DONTFRAG;
+             if (buf->flags & NETBUF_FLAG_TXTOS)
+               pcb->tos = buf->tos;
+             if (nf && !ip_addr_isany(source)) {
+diff --git a/src/api/sockets.c b/src/api/sockets.c
+index 9a12500..45df4c7 100644
+--- a/src/api/sockets.c
++++ b/src/api/sockets.c
+@@ -46,6 +46,9 @@
+ #ifndef IP_RECVTOS
+ #define IP_RECVTOS 13
+ #endif
++#ifndef IP_MTU_DISCOVER
++#define IP_MTU_DISCOVER 10
++#endif
+ 
+ #if LWIP_SOCKET /* don't build if not configured for use in lwipopts.h */
+ 
+@@ -1702,6 +1705,14 @@ lwip_sendmsg(int s, const struct msghdr *msg, int flags)
+ 
+       /* send the data */
+       err = netconn_send(sock->conn, &chain_buf);
++#if LWIP_NETBUF_RECVINFO
++      if (chain_buf.flags & NETBUF_FLAG_TXSIZE) {
++        netbuf_free(&chain_buf);
++        set_errno(EMSGSIZE);
++        done_socket(sock);
++        return -1;
++      }
++#endif
+     }
+ 
+     /* deallocated the buffer */
+@@ -1817,6 +1828,14 @@ lwip_sendto(int s, const void *data, size_t size, int flags,
+ 
+     /* send the data */
+     err = netconn_send(sock->conn, &buf);
++#if LWIP_NETBUF_RECVINFO
++  if (buf.flags & NETBUF_FLAG_TXSIZE) {
++    netbuf_free(&buf);
++    set_errno(EMSGSIZE);
++    done_socket(sock);
++    return -1;
++  }
++#endif
+   }
+ 
+   /* deallocated the buffer */
+@@ -3683,6 +3702,13 @@ lwip_setsockopt_impl(int s, int level, int optname, const void *optval, socklen_
+                                                   NETCONN_UDP);
+           sock->conn->recv_tos = !!*(const int *)optval;
+           break;
++        case IP_MTU_DISCOVER:
++          LWIP_SOCKOPT_CHECK_OPTLEN_CONN_PCB_TYPE(sock, optlen, int,
++                                                  NETCONN_UDP);
++          if (*(const int *)optval < 0 || *(const int *)optval > 3)
++            return EINVAL;
++          sock->conn->dontfrag = (*(const int *)optval >= 2);
++          break;
+         case IP_PKTINFO:
+           LWIP_SOCKOPT_CHECK_OPTLEN_CONN_PCB_TYPE(sock, optlen, int, NETCONN_UDP);
+           if (*(const int *)optval) {
+diff --git a/src/core/ipv4/ip4.c b/src/core/ipv4/ip4.c
+index e044bff..ca6b48f 100644
+--- a/src/core/ipv4/ip4.c
++++ b/src/core/ipv4/ip4.c
+@@ -960,7 +960,11 @@ ip4_output_if_opt_src(struct pbuf *p, const ip4_addr_t *src, const ip4_addr_t *d
+ #if CHECKSUM_GEN_IP_INLINE
+     chk_sum += iphdr->_len;
+ #endif /* CHECKSUM_GEN_IP_INLINE */
+-    IPH_OFFSET_SET(iphdr, 0);
++    IPH_OFFSET_SET(iphdr,
++                   lwip_htons((p->flags & PBUF_FLAG_DONTFRAG) ? IP_DF : 0));
++#if CHECKSUM_GEN_IP_INLINE
++    chk_sum += iphdr->_offset;
++#endif
+     IPH_ID_SET(iphdr, lwip_htons(ip_id));
+ #if CHECKSUM_GEN_IP_INLINE
+     chk_sum += iphdr->_id;
+diff --git a/src/core/udp.c b/src/core/udp.c
+index c787ae0..f4c286b 100644
+--- a/src/core/udp.c
++++ b/src/core/udp.c
+@@ -766,7 +766,10 @@ udp_sendto_if_src_chksum(struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *d
+       return ERR_MEM;
+     }
+     if (p->tot_len != 0) {
+-      /* chain header q in front of given pbuf p (only if p contains data) */
++      /* IP output sees q, so retain DF when a separate UDP header is needed. */
++    q->flags |= p->flags & PBUF_FLAG_DONTFRAG;
++
++    /* chain header q in front of given pbuf p (only if p contains data) */
+       pbuf_chain(q, p);
+     }
+     /* first pbuf q points to header pbuf */
+diff --git a/src/include/lwip/api.h b/src/include/lwip/api.h
+index 62a7483..6d1068e 100644
+--- a/src/include/lwip/api.h
++++ b/src/include/lwip/api.h
+@@ -218,6 +218,7 @@ typedef void (* netconn_callback)(struct netconn *, enum netconn_evt, u16_t len)
+ struct netconn {
+ #if LWIP_NETBUF_RECVINFO
+   u8_t recv_tos;
++  u8_t dontfrag;
+ #endif
+   /** type of the netconn (TCP, UDP or RAW) */
+   enum netconn_type type;
+diff --git a/src/include/lwip/netbuf.h b/src/include/lwip/netbuf.h
+index 3cdf65f..ca662cd 100644
+--- a/src/include/lwip/netbuf.h
++++ b/src/include/lwip/netbuf.h
+@@ -57,6 +57,7 @@ extern "C" {
+ #define NETBUF_FLAG_CHKSUM      0x02
+ #define NETBUF_FLAG_TXINFO 0x04
+ #define NETBUF_FLAG_TXTOS 0x08
++#define NETBUF_FLAG_TXSIZE 0x10
+ 
+ /** "Network buffer" - contains data and addressing info */
+ struct netbuf {
+diff --git a/src/include/lwip/pbuf.h b/src/include/lwip/pbuf.h
+index 5a4fc88..4918a98 100644
+--- a/src/include/lwip/pbuf.h
++++ b/src/include/lwip/pbuf.h
+@@ -181,6 +181,7 @@ typedef enum {
+ #define PBUF_FLAG_LLMCAST   0x10U
+ /** indicates this pbuf includes a TCP FIN flag */
+ #define PBUF_FLAG_TCP_FIN   0x20U
++#define PBUF_FLAG_DONTFRAG 0x40U
+ 
+ /** Main packet buffer struct */
+ struct pbuf {
