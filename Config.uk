@@ -435,3 +435,11 @@ config LWIP_UKNETDEV_DEFER_STATUS_RX
 	  A callback in tcpip_thread must not fill its own receive mailbox.
 	  Wake the existing RX dispatcher to perform the initial queue drain.
 
+config LWIP_TCP_ACK_DELAY_MS
+	int "Independent delayed TCP ACK deadline (ms; 0 disables)"
+	depends on LIBLWIP && LWIP_TCP && LWIP_THREADS && (LWIP_PINNED21X || LWIP_PINNED22X)
+	range 0 249
+	default 0
+	help
+	  An optional deadline below the 250 ms fast timer. This is a TCP
+	  setting, independent of QUIC timers. The HTTP/3 application uses 50.

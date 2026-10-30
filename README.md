@@ -31,6 +31,7 @@ A merge on master alone does not fix an older release archive.
 |0017 udp-ancillary-data|RX/TX address and traffic-class metadata|
 |0018 udp-do-not-fragment|DF/EMSGSIZE, using0017 storage|
 |0019 tcp-readiness|Persistent Unikraft eventpoll state; uses common/0006 callback|
+|0020 tcp-ack-deadline|Deferred optional ACK policy; default disabled|
 |0021 native-msghdr-iovlen-type|Derive iovec index type from the native libc declaration|
 
 Port source/configuration (uknetdev.c, Config.uk, Makefile.uk, lwipopts.h,
