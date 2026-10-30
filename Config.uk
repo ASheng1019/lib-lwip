@@ -444,3 +444,12 @@ config LWIP_IPV6_SETUP
 		Configure a named Ethernet netif on the TCP/IP thread, with explicit
 		multicast-receive contract and bounded static/link-local DAD polling.
 		No addresses, interfaces or device capabilities are assumed by this helper.
+
+config LWIP_TCP_ACK_DELAY_MS
+	int "Independent delayed TCP ACK deadline (ms; 0 disables)"
+	depends on LIBLWIP && LWIP_TCP && LWIP_THREADS && (LWIP_PINNED21X || LWIP_PINNED22X)
+	range 0 249
+	default 0
+	help
+	  An optional deadline below the 250 ms fast timer. This is a TCP
+	  setting, independent of QUIC timers. The HTTP/3 application uses 50.

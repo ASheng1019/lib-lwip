@@ -19,6 +19,10 @@
 #else
 #define LWIP_NETBUF_RECVINFO 0
 #endif
+#ifdef CONFIG_LWIP_TCP_ACK_DELAY_MS
+#define LWIP_TCP_ACK_DELAY_MS CONFIG_LWIP_TCP_ACK_DELAY_MS
+#endif
+
 /**
  * Memory mode
  */

@@ -1,0 +1,140 @@
+Subject: Provide a configurable TCP ACK deadline independent of slow timers
+Target: lwIP fork / optional TCP timing policy
+Base: fork-lwip bef26c44236a078d4352e76392ef16f019bea501 after common port patches
+Status: Local independent patch; not submitted upstream.
+
+--- a/src/core/tcp.c
++++ b/src/core/tcp.c
+@@ -108,6 +108,7 @@
+ #include "lwip/priv/tcp_priv.h"
+ #include "lwip/debug.h"
+ #include "lwip/stats.h"
++#include "lwip/timeouts.h"
+ #include "lwip/ip6.h"
+ #include "lwip/ip6_addr.h"
+ #include "lwip/nd6.h"
+@@ -230,6 +231,36 @@
+ /**
+  * Called periodically to dispatch TCP timers.
+  */
++#if LWIP_TCP_ACK_DELAY_MS
++/* One stack-wide timeout, no PCB lifetime tied to a timeout argument. All
++ * operations run on the TCP core. Empty ACK output invokes no user callback.
++ * The historical fast timer remains the allocation-pressure fallback. */
++static u8_t tcp_ack_delay_armed;
++static void tcp_ack_delay_timeout(void *arg)
++{
++  struct tcp_pcb *pcb;
++  LWIP_UNUSED_ARG(arg);
++  LWIP_ASSERT_CORE_LOCKED();
++  tcp_ack_delay_armed = 0;
++  for (pcb = tcp_active_pcbs; pcb != NULL; pcb = pcb->next) {
++    if (pcb->flags & TF_ACK_DELAY) {
++      if (tcp_send_empty_ack(pcb) != ERR_OK) {
++        tcp_ack_delay_start();
++      }
++    }
++  }
++}
++
++void tcp_ack_delay_start(void)
++{
++  LWIP_ASSERT_CORE_LOCKED();
++  if (!tcp_ack_delay_armed) {
++    tcp_ack_delay_armed = 1;
++    sys_timeout(LWIP_TCP_ACK_DELAY_MS, tcp_ack_delay_timeout, NULL);
++  }
++}
++#endif
++
+ void
+ tcp_tmr(void)
+ {
+@@ -1481,6 +1512,11 @@
+ {
+   struct tcp_pcb *pcb;
+ 
++#if LWIP_TCP_ACK_DELAY_MS
++  /* Also recover if sys_timeout could not allocate its bounded timer. */
++  sys_untimeout(tcp_ack_delay_timeout, NULL);
++  tcp_ack_delay_armed = 0;
++#endif
+   ++tcp_timer_ctr;
+ 
+ tcp_fasttmr_start:
+@@ -1494,8 +1530,16 @@
+       if (pcb->flags & TF_ACK_DELAY) {
+         LWIP_DEBUGF(TCP_DEBUG, ("tcp_fasttmr: delayed ACK\n"));
+         tcp_ack_now(pcb);
++#if LWIP_TCP_ACK_DELAY_MS
++        if (tcp_output(pcb) == ERR_OK) {
++          tcp_clear_flags(pcb, TF_ACK_DELAY | TF_ACK_NOW);
++        } else {
++          tcp_ack_delay_start();
++        }
++#else
+         tcp_output(pcb);
+         tcp_clear_flags(pcb, TF_ACK_DELAY | TF_ACK_NOW);
++#endif
+       }
+       /* send pending FIN */
+       if (pcb->flags & TF_CLOSEPEND) {
+--- a/src/core/tcp_out.c
++++ b/src/core/tcp_out.c
+@@ -2044,6 +2044,7 @@
+   if (p == NULL) {
+     /* let tcp_fasttmr retry sending this ACK */
+     tcp_set_flags(pcb, TF_ACK_DELAY | TF_ACK_NOW);
++    tcp_ack_delay_start();
+     LWIP_DEBUGF(TCP_OUTPUT_DEBUG, ("tcp_output: (ACK) could not allocate pbuf\n"));
+     return ERR_BUF;
+   }
+@@ -2059,6 +2060,7 @@
+   if (err != ERR_OK) {
+     /* let tcp_fasttmr retry sending this ACK */
+     tcp_set_flags(pcb, TF_ACK_DELAY | TF_ACK_NOW);
++    tcp_ack_delay_start();
+   } else {
+     /* remove ACK flags from the PCB, as we sent an empty ACK now */
+     tcp_clear_flags(pcb, TF_ACK_DELAY | TF_ACK_NOW);
+--- a/src/include/lwip/priv/tcp_priv.h
++++ b/src/include/lwip/priv/tcp_priv.h
+@@ -445,15 +445,29 @@
+ void tcp_seg_free(struct tcp_seg *seg);
+ struct tcp_seg *tcp_seg_copy(struct tcp_seg *seg);
+ 
+-#define tcp_ack(pcb)                               \
+-  do {                                             \
+-    if((pcb)->flags & TF_ACK_DELAY) {              \
+-      tcp_clear_flags(pcb, TF_ACK_DELAY);          \
+-      tcp_ack_now(pcb);                            \
+-    }                                              \
+-    else {                                         \
+-      tcp_set_flags(pcb, TF_ACK_DELAY);            \
+-    }                                              \
++/* Optional ACK deadline independent of the 250/500ms TCP clocks. */
++#ifndef LWIP_TCP_ACK_DELAY_MS
++#define LWIP_TCP_ACK_DELAY_MS 0
++#endif
++#if LWIP_TCP_ACK_DELAY_MS
++#if !LWIP_TIMERS || LWIP_TCP_ACK_DELAY_MS < 1 ||                               \
++    LWIP_TCP_ACK_DELAY_MS >= TCP_FAST_INTERVAL
++#error "ACK deadline requires timers and must be below TCP_FAST_INTERVAL"
++#endif
++void tcp_ack_delay_start(void);
++#else
++#define tcp_ack_delay_start() ((void)0)
++#endif
++
++#define tcp_ack(pcb)                                                           \
++  do {                                                                         \
++    if ((pcb)->flags & TF_ACK_DELAY) {                                         \
++      tcp_clear_flags(pcb, TF_ACK_DELAY);                                      \
++      tcp_ack_now(pcb);                                                        \
++    } else {                                                                   \
++      tcp_set_flags(pcb, TF_ACK_DELAY);                                        \
++      tcp_ack_delay_start();                                                   \
++    }                                                                          \
+   } while (0)
+ 
+ #define tcp_ack_now(pcb)                           \
