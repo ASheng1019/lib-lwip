@@ -426,3 +426,12 @@ config LWIP_NETBUF_RECVINFO
 	  Retain destination addresses for recvmsg ancillary data. The setting
 	  is exported through lwipopts.h to keep netbuf layout consistent.
 
+config LWIP_UKNETDEV_DEFER_STATUS_RX
+	bool "Defer status-callback receive work to the RX dispatcher"
+	depends on LIBLWIP && LWIP_UKNETDEV && LWIP_THREADS
+	depends on LIBUKNETDEV_DISPATCHERTHREADS && !LWIP_UKNETDEV_POLLONLY
+	default y
+	help
+	  A callback in tcpip_thread must not fill its own receive mailbox.
+	  Wake the existing RX dispatcher to perform the initial queue drain.
+

@@ -197,6 +197,13 @@ static err_t uknetdev_output(struct netif *nf, struct pbuf *p)
 	return ERR_OK;
 }
 
+#if CONFIG_LWIP_UKNETDEV_DEFER_STATUS_RX
+#if !CONFIG_LWIP_THREADS || !CONFIG_LIBUKNETDEV_DISPATCHERTHREADS || CONFIG_LWIP_UKNETDEV_POLLONLY
+#error Deferred status RX requires lwIP threads and netdev dispatcher threads
+#endif
+#include <uk/netdev_driver.h>
+#endif
+
 static void uknetdev_input(struct uk_netdev *dev,
 			   uint16_t queue_id __unused, void *argp)
 {
@@ -386,7 +393,15 @@ static void uknetdev_updown(struct netif *nf)
 				 * interrupts are enabled. For this purpose
 				 * we do an initial poll.
 				 */
+#if CONFIG_LWIP_UKNETDEV_DEFER_STATUS_RX
+				/* A status notification may run in tcpip_thread itself.
+				 * Wake the RX dispatcher instead of queuing packets back
+				 * into that same thread's mailbox while it cannot drain.
+				 */
+				uk_netdev_drv_rx_event(dev, 0);
+#else
 				uknetdev_poll(nf);
+#endif
 			}
 		} else {
 #ifdef CONFIG_HAVE_SCHED
