@@ -1,0 +1,18 @@
+Subject: Return only copied bytes for recvmsg truncation
+Target: lwIP
+Base: fork-lwip bef26c44236a078d4352e76392ef16f019bea501 after common port patches
+Upstream-PR: https://github.com/lwip-tcpip/lwip/pull/115
+Backport-to: pinned lwIP 2.1 compatibility source
+
+--- a/src/api/sockets.c
++++ b/src/api/sockets.c
+@@ -1375,7 +1375,8 @@
+ 
+     sock_set_errno(sock, 0);
+     done_socket(sock);
+-    return (int)datagram_len;
++    /* Return copied bytes, not the original datagram length. */
++    return (ssize_t)LWIP_MIN((size_t)datagram_len, (size_t)buflen);
+   }
+ #else /* LWIP_UDP || LWIP_RAW */
+   sock_set_errno(sock, err_to_errno(ERR_ARG));
