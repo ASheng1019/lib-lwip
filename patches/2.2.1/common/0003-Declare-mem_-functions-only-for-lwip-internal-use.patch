@@ -1,0 +1,28 @@
+From 26e9c2672d6e98d2a1f7e36787f22d7e4f50e4fd Mon Sep 17 00:00:00 2001
+From: Sheng <hsdai22@m.fudan.edu.cn>
+Date: Thu, 22 Oct 2026 18:31:40 +0800
+Subject: [PATCH] 0003-Declare-mem_-functions-only-for-lwip-internal-use
+
+Rebased Unikraft adaptation for lwIP 2.2.1; retain native-aware upstream address bounds.
+---
+ src/include/lwip/mem.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/include/lwip/mem.h b/src/include/lwip/mem.h
+index 6819ee48..2808beaf 100644
+--- a/src/include/lwip/mem.h
++++ b/src/include/lwip/mem.h
+@@ -69,11 +69,13 @@ typedef u16_t mem_size_t;
+ #endif /* MEM_SIZE > 64000 */
+ #endif
+ 
++#ifdef __IN_LIBLWIP__
+ void  mem_init(void);
+ void *mem_trim(void *mem, mem_size_t size);
+ void *mem_malloc(mem_size_t size);
+ void *mem_calloc(mem_size_t count, mem_size_t size);
+ void  mem_free(void *mem);
++#endif
+ 
+ #ifdef __cplusplus
+ }

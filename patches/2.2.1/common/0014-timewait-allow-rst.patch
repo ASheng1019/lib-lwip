@@ -1,0 +1,42 @@
+From d73f1d9a5b1c56dc61258fc338d8890c9fff341c Mon Sep 17 00:00:00 2001
+From: Sheng <hsdai22@m.fudan.edu.cn>
+Date: Thu, 22 Oct 2026 18:32:12 +0800
+Subject: [PATCH] 0014-timewait-allow-rst
+
+Rebased Unikraft adaptation for lwIP 2.2.1.
+---
+ src/core/tcp_in.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/src/core/tcp_in.c b/src/core/tcp_in.c
+index 1b17e40f..a37b983f 100644
+--- a/src/core/tcp_in.c
++++ b/src/core/tcp_in.c
+@@ -747,6 +747,27 @@ tcp_timewait_input(struct tcp_pcb *pcb)
+    *   acceptable since we only send ACKs)
+    * - second check the RST bit (... return) */
+   if (flags & TCP_RST) {
++    if (seqno == pcb->rcv_nxt) {
++      /* Go to closed state */
++      tcp_pcb_purge(pcb);
++      /* Remove it from the list */
++      struct tcp_pcb *prev = NULL;
++      struct tcp_pcb *pcbi = tcp_tw_pcbs;
++      while (pcbi != NULL) {
++        if (pcbi == pcb) {
++          if (prev != NULL) {
++            prev->next = pcb->next;
++          } else {
++            tcp_tw_pcbs = pcb->next;
++          }
++          pcbi = pcbi->next;
++          tcp_free(pcb);
++        } else {
++          prev = pcbi;
++          pcbi = pcbi->next;
++        }
++      }
++    }
+     return;
+   }
+ 

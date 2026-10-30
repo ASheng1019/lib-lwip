@@ -1,0 +1,23 @@
+From 1978b6f1d8f5833966c1304b2682bf578ef6649f Mon Sep 17 00:00:00 2001
+From: Sheng <hsdai22@m.fudan.edu.cn>
+Date: Thu, 22 Oct 2026 18:51:51 +0800
+Subject: [PATCH] Derive lwIP iovec iteration type from native libc msghdr
+
+---
+ src/include/lwip/sockets.h | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/include/lwip/sockets.h b/src/include/lwip/sockets.h
+index d6144a82..d11f5613 100644
+--- a/src/include/lwip/sockets.h
++++ b/src/include/lwip/sockets.h
+@@ -46,6 +46,9 @@
+ #include <net/if.h>
+ #include <poll.h>
+ 
++/* Keep lwIP iteration types consistent with the native libc msghdr. */
++typedef __typeof__(((struct msghdr *)0)->msg_iovlen) msg_iovlen_t;
++
+ #include "lwip/opt.h"
+ 
+ #if LWIP_SOCKET /* don't build if not configured for use in lwipopts.h */
