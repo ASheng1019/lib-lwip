@@ -56,7 +56,7 @@ LIBLWIP_URL=https://github.com/unikraft/fork-lwip/archive/refs/tags/$(LIBLWIP_TA
 LIBLWIP_ORIGIN_SHA256=8f0ae46e2702720ce852b00de5d304adb2809b0203741f299876594bb8be7890
 endif
 
-LIBLWIP_PATCHDIR=$(LIBLWIP_BASE)/patches
+LIBLWIP_PATCHDIR=$(LIBLWIP_BASE)/patches/common
 $(eval $(call fetch,liblwip,$(LIBLWIP_URL)))
 $(eval $(call patch,liblwip,$(LIBLWIP_PATCHDIR),$(LIBLWIP_ZIPNAME)))
 
