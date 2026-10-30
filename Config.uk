@@ -418,3 +418,11 @@ config LWIP_SERVICE_DEBUG
 endif
 endif
 
+config LWIP_NETBUF_RECVINFO
+	bool "Receive UDP destination metadata"
+	depends on LIBLWIP && LWIP_SOCKET && (LWIP_PINNED21X || LWIP_PINNED22X)
+	default n
+	help
+	  Retain destination addresses for recvmsg ancillary data. The setting
+	  is exported through lwipopts.h to keep netbuf layout consistent.
+

@@ -13,6 +13,12 @@
 #include <sys/time.h>
 #include <uk/config.h>
 
+/* Public feature settings: all lwIP users must see the same netbuf layout. */
+#ifdef CONFIG_LWIP_NETBUF_RECVINFO
+#define LWIP_NETBUF_RECVINFO 1
+#else
+#define LWIP_NETBUF_RECVINFO 0
+#endif
 /**
  * Memory mode
  */

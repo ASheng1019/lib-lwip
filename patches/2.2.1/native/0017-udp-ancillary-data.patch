@@ -1,0 +1,393 @@
+From: Sheng <hsdai22@m.fudan.edu.cn>
+Subject: [PATCH] Support UDP packet metadata for selectable IP families
+
+Unikraft platform socket adaptation. Base: lwIP 2.2.1 after native0016.
+
+diff --git a/src/api/api_msg.c b/src/api/api_msg.c
+index 8092be9..252f39e 100644
+--- a/src/api/api_msg.c
++++ b/src/api/api_msg.c
+@@ -259,6 +259,15 @@ recv_udp(void *arg, struct udp_pcb *pcb, struct pbuf *p,
+     ip_addr_set(&buf->addr, addr);
+     buf->port = port;
+ #if LWIP_NETBUF_RECVINFO
++    buf->flags = 0;
++#if LWIP_IPV6
++    if (ip_current_is_v6())
++      buf->tos = IP6H_TC(ip6_current_header());
++#endif
++#if LWIP_IPV4
++    if (!ip_current_is_v6())
++      buf->tos = IPH_TOS(ip4_current_header());
++#endif
+     if (conn->flags & NETCONN_FLAG_PKTINFO) {
+       /* get the UDP header - always in the first pbuf, ensured by udp_input */
+       const struct udp_hdr *udphdr = (const struct udp_hdr *)ip_next_header_ptr();
+@@ -718,6 +727,9 @@ netconn_alloc(enum netconn_type t, netconn_callback callback)
+ 
+   conn->pending_err = ERR_OK;
+   conn->type = t;
++#if LWIP_NETBUF_RECVINFO
++  conn->recv_tos = 0;
++#endif
+   conn->pcb.tcp = NULL;
+ #if LWIP_NETCONN_FULLDUPLEX
+   conn->mbox_threads_waiting = 0;
+@@ -1552,6 +1564,74 @@ lwip_netconn_do_send(void *m)
+ #endif
+ #if LWIP_UDP
+         case NETCONN_UDP:
++#if LWIP_NETBUF_RECVINFO
++          if ((msg->msg.b->flags & (NETBUF_FLAG_TXINFO | NETBUF_FLAG_TXTOS))) {
++            struct netbuf *buf = msg->msg.b;
++            struct udp_pcb *pcb = msg->conn->pcb.udp;
++            struct netif *nf = NULL;
++            const ip_addr_t *dest =
++                ip_addr_isany(&buf->addr) ? &pcb->remote_ip : &buf->addr;
++            const ip_addr_t *source = &pcb->local_ip;
++            u16_t port = buf->port ? buf->port : pcb->remote_port;
++            u8_t old_tos = pcb->tos;
++            if (buf->flags & NETBUF_FLAG_TXINFO) {
++              nf = netif_get_by_index(buf->tx_ifindex);
++              if (!ip_addr_isany(&buf->tx_src)) {
++                source = &buf->tx_src;
++                if (nf == NULL && !buf->tx_ifindex) {
++                  NETIF_FOREACH(nf)
++                  {
++#if LWIP_IPV4
++                    if (IP_IS_V4(source) &&
++                        ip4_addr_cmp(ip_2_ip4(source), netif_ip4_addr(nf)))
++                      break;
++#endif
++#if LWIP_IPV6
++                    if (IP_IS_V6(source) &&
++                        netif_get_ip6_addr_match(nf, ip_2_ip6(source)) >= 0)
++                      break;
++#endif
++                  }
++                }
++                if (!nf
++#if LWIP_IPV4
++                    || (IP_IS_V4(source) &&
++                        !ip4_addr_cmp(ip_2_ip4(source), netif_ip4_addr(nf)))
++#endif
++#if LWIP_IPV6
++                    || (IP_IS_V6(source) &&
++                        netif_get_ip6_addr_match(nf, ip_2_ip6(source)) < 0)
++#endif
++                ) {
++                  err = ERR_RTE;
++                  break;
++                }
++              }
++              if (buf->tx_ifindex && !nf) {
++                err = ERR_RTE;
++                break;
++              }
++            }
++            if (!nf)
++              nf = ip_route(source, dest);
++            if (!nf) {
++              err = ERR_RTE;
++              break;
++            }
++            if (buf->flags & NETBUF_FLAG_TXTOS)
++              pcb->tos = buf->tos;
++            if (nf && !ip_addr_isany(source)) {
++              err = udp_sendto_if_src(pcb, buf->p, dest, port, nf, source);
++            } else if (nf) {
++              err = udp_sendto_if(pcb, buf->p, dest, port, nf);
++            } else {
++              err = udp_sendto(pcb, buf->p, dest, port);
++            }
++            pcb->tos = old_tos; /* Serialized TCP/IP thread; never modify PCB in
++                                   socket callers. */
++            break;
++          }
++#endif
+ #if LWIP_CHECKSUM_ON_COPY
+           if (ip_addr_isany(&msg->msg.b->addr) || IP_IS_ANY_TYPE_VAL(msg->msg.b->addr)) {
+             err = udp_send_chksum(msg->conn->pcb.udp, msg->msg.b->p,
+diff --git a/src/api/sockets.c b/src/api/sockets.c
+index 66ec8ca..9a12500 100644
+--- a/src/api/sockets.c
++++ b/src/api/sockets.c
+@@ -42,6 +42,10 @@
+ #include <sys/time.h>
+ 
+ #include "lwip/opt.h"
++#include <netinet/in.h>
++#ifndef IP_RECVTOS
++#define IP_RECVTOS 13
++#endif
+ 
+ #if LWIP_SOCKET /* don't build if not configured for use in lwipopts.h */
+ 
+@@ -1198,34 +1202,69 @@ lwip_recvfrom_udp_raw(struct lwip_sock *sock, int flags, struct msghdr *msg, u16
+   /* Initialize flag output */
+   msg->msg_flags = 0;
+ 
+-  if (msg->msg_control) {
+-    u8_t wrote_msg = 0;
++  {
++    size_t capacity = msg->msg_control ? msg->msg_controllen : 0, used = 0;
+ #if LWIP_NETBUF_RECVINFO
+-    /* Check if packet info was recorded */
++#if LWIP_IPV4
++    struct in_pktinfo pi4;
++#endif
++#if LWIP_IPV6
++    struct in6_pktinfo pi6;
++#endif
++    const void *info = NULL;
++    size_t length = 0;
++    int level = 0, type = 0;
+     if (buf->flags & NETBUF_FLAG_DESTADDR) {
+-      if (IP_IS_V4(&buf->toaddr)) {
+ #if LWIP_IPV4
+-        if (msg->msg_controllen >= CMSG_SPACE(sizeof(struct in_pktinfo))) {
+-          struct cmsghdr *chdr = CMSG_FIRSTHDR(msg); /* This will always return a header!! */
+-          struct in_pktinfo *pkti = (struct in_pktinfo *)CMSG_DATA(chdr);
+-          chdr->cmsg_level = IPPROTO_IP;
+-          chdr->cmsg_type = IP_PKTINFO;
+-          chdr->cmsg_len = CMSG_LEN(sizeof(struct in_pktinfo));
+-          pkti->ipi_ifindex = buf->p->if_idx;
+-          inet_addr_from_ip4addr(&pkti->ipi_addr, ip_2_ip4(netbuf_destaddr(buf)));
+-          msg->msg_controllen = CMSG_SPACE(sizeof(struct in_pktinfo));
+-          wrote_msg = 1;
+-        } else {
+-          msg->msg_flags |= MSG_CTRUNC;
+-        }
+-#endif /* LWIP_IPV4 */
++      if (IP_IS_V4(&buf->toaddr)) {
++        memset(&pi4, 0, sizeof(pi4));
++        pi4.ipi_ifindex = buf->p->if_idx;
++        inet_addr_from_ip4addr(&pi4.ipi_addr, ip_2_ip4(&buf->toaddr));
++        pi4.ipi_spec_dst = pi4.ipi_addr;
++        info = &pi4;
++        length = sizeof(pi4);
++        level = IPPROTO_IP;
++        type = IP_PKTINFO;
+       }
++#endif
++#if LWIP_IPV6
++      if (IP_IS_V6(&buf->toaddr)) {
++        memset(&pi6, 0, sizeof(pi6));
++        pi6.ipi6_ifindex = buf->p->if_idx;
++        inet6_addr_from_ip6addr(&pi6.ipi6_addr, ip_2_ip6(&buf->toaddr));
++        info = &pi6;
++        length = sizeof(pi6);
++        level = IPPROTO_IPV6;
++        type = IPV6_PKTINFO;
++      }
++#endif
++      if (capacity >= CMSG_SPACE(length)) {
++        struct cmsghdr *c = (struct cmsghdr *)msg->msg_control;
++        c->cmsg_level = level;
++        c->cmsg_type = type;
++        c->cmsg_len = CMSG_LEN(length);
++        memcpy(CMSG_DATA(c), info, length);
++        used = CMSG_SPACE(length);
++      } else
++        msg->msg_flags |= MSG_CTRUNC;
+     }
+-#endif /* LWIP_NETBUF_RECVINFO */
+-
+-    if (!wrote_msg) {
+-      msg->msg_controllen = 0;
++    if (sock->conn->recv_tos) {
++      int tos = buf->tos;
++      u8_t tos4 = buf->tos;
++      length = IP_IS_V6(&buf->addr) ? sizeof(tos) : sizeof(tos4);
++      if (capacity - used >= CMSG_SPACE(length)) {
++        struct cmsghdr *c = (struct cmsghdr *)((char *)msg->msg_control + used);
++        c->cmsg_level = IP_IS_V6(&buf->addr) ? IPPROTO_IPV6 : IPPROTO_IP;
++        c->cmsg_type = IP_IS_V6(&buf->addr) ? IPV6_TCLASS : IP_TOS;
++        c->cmsg_len = CMSG_LEN(length);
++        memcpy(CMSG_DATA(c),
++               IP_IS_V6(&buf->addr) ? (void *)&tos : (void *)&tos4, length);
++        used += CMSG_SPACE(length);
++      } else
++        msg->msg_flags |= MSG_CTRUNC;
+     }
++#endif
++    msg->msg_controllen = used;
+   }
+ 
+   /* If we don't peek the incoming message: zero lastdata pointer and free the netbuf */
+@@ -1487,8 +1526,11 @@ lwip_sendmsg(int s, const struct msghdr *msg, int flags)
+   LWIP_ERROR("lwip_sendmsg: unsupported flags", (flags & ~(MSG_DONTWAIT | MSG_MORE)) == 0,
+              set_errno(EOPNOTSUPP); done_socket(sock); return -1;);
+ 
+-  LWIP_UNUSED_ARG(msg->msg_control);
+-  LWIP_UNUSED_ARG(msg->msg_controllen);
++  if (msg->msg_controllen && !msg->msg_control) {
++    set_errno(EINVAL);
++    done_socket(sock);
++    return -1;
++  }
+   LWIP_UNUSED_ARG(msg->msg_flags);
+ 
+   if (NETCONNTYPE_GROUP(netconn_type(sock->conn)) == NETCONN_TCP) {
+@@ -1528,6 +1570,60 @@ lwip_sendmsg(int s, const struct msghdr *msg, int flags)
+       SOCKADDR_TO_IPADDR_PORT((const struct sockaddr *)msg->msg_name, &chain_buf.addr, remote_port);
+       netbuf_fromport(&chain_buf) = remote_port;
+     }
++#if LWIP_NETBUF_RECVINFO
++    if (msg->msg_control && msg->msg_controllen) {
++      size_t offset = 0;
++      while (offset < msg->msg_controllen) {
++        const struct cmsghdr *c =
++            (const struct cmsghdr *)((const char *)msg->msg_control + offset);
++        if (msg->msg_controllen - offset < sizeof(*c) ||
++            c->cmsg_len < CMSG_LEN(0) ||
++            c->cmsg_len > msg->msg_controllen - offset)
++          goto bad_control;
++#if LWIP_IPV4
++        if (c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_PKTINFO &&
++            c->cmsg_len == CMSG_LEN(sizeof(struct in_pktinfo))) {
++          struct in_pktinfo pi;
++          memcpy(&pi, CMSG_DATA(c), sizeof(pi));
++          if (pi.ipi_ifindex < 0 || pi.ipi_ifindex > 255 ||
++              (chain_buf.flags & NETBUF_FLAG_TXINFO))
++            goto bad_control;
++          inet_addr_to_ip4addr(ip_2_ip4(&chain_buf.tx_src), &pi.ipi_spec_dst);
++          IP_SET_TYPE_VAL(chain_buf.tx_src, IPADDR_TYPE_V4);
++          chain_buf.tx_ifindex = pi.ipi_ifindex;
++          chain_buf.flags |= NETBUF_FLAG_TXINFO;
++        } else
++#endif
++#if LWIP_IPV6
++        if (c->cmsg_level == IPPROTO_IPV6 &&
++                   c->cmsg_type == IPV6_PKTINFO &&
++                   c->cmsg_len == CMSG_LEN(sizeof(struct in6_pktinfo))) {
++          struct in6_pktinfo pi;
++          memcpy(&pi, CMSG_DATA(c), sizeof(pi));
++          if (pi.ipi6_ifindex > 255 || (chain_buf.flags & NETBUF_FLAG_TXINFO))
++            goto bad_control;
++          inet6_addr_to_ip6addr(ip_2_ip6(&chain_buf.tx_src), &pi.ipi6_addr);
++          IP_SET_TYPE_VAL(chain_buf.tx_src, IPADDR_TYPE_V6);
++          chain_buf.tx_ifindex = pi.ipi6_ifindex;
++          chain_buf.flags |= NETBUF_FLAG_TXINFO;
++        } else
++#endif
++        if (((c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_TOS) ||
++                    (c->cmsg_level == IPPROTO_IPV6 &&
++                     c->cmsg_type == IPV6_TCLASS)) &&
++                   c->cmsg_len == CMSG_LEN(sizeof(int))) {
++          int tos;
++          memcpy(&tos, CMSG_DATA(c), sizeof(tos));
++          if (tos < 0 || tos > 255 || (chain_buf.flags & NETBUF_FLAG_TXTOS))
++            goto bad_control;
++          chain_buf.tos = tos;
++          chain_buf.flags |= NETBUF_FLAG_TXTOS;
++        } else
++          goto bad_control;
++        offset += CMSG_ALIGN(c->cmsg_len);
++      }
++    }
++#endif
+ #if LWIP_NETIF_TX_SINGLE_PBUF
+     for (i = 0; i < msg->msg_iovlen; i++) {
+       size += msg->msg_iov[i].iov_len;
+@@ -1554,7 +1650,8 @@ lwip_sendmsg(int s, const struct msghdr *msg, int flags)
+       {
+         /* This can be improved by using LWIP_CHKSUM_COPY() and aggregating the checksum for each IO vector */
+         u16_t chksum = ~inet_chksum_pbuf(chain_buf.p);
+-        netbuf_set_chksum(&chain_buf, chksum);
++        chain_buf.flags |= NETBUF_FLAG_CHKSUM;
++        chain_buf.toport_chksum = chksum;
+       }
+ #endif /* LWIP_CHECKSUM_ON_COPY */
+       err = ERR_OK;
+@@ -1613,7 +1710,11 @@ lwip_sendmsg(int s, const struct msghdr *msg, int flags)
+     set_errno(err_to_errno(err));
+     done_socket(sock);
+     return (err == ERR_OK ? size : -1);
+-sendmsg_emsgsize:
++  bad_control:
++    set_errno(EINVAL);
++    done_socket(sock);
++    return -1;
++  sendmsg_emsgsize:
+     set_errno(EMSGSIZE);
+     netbuf_free(&chain_buf);
+     done_socket(sock);
+@@ -1668,7 +1769,7 @@ lwip_sendto(int s, const void *data, size_t size, int flags,
+ 
+   /* initialize a buffer */
+   buf.p = buf.ptr = NULL;
+-#if LWIP_CHECKSUM_ON_COPY
++#if LWIP_CHECKSUM_ON_COPY || LWIP_NETBUF_RECVINFO
+   buf.flags = 0;
+ #endif /* LWIP_CHECKSUM_ON_COPY */
+   if (to) {
+@@ -3577,6 +3678,11 @@ lwip_setsockopt_impl(int s, int level, int optname, const void *optval, socklen_
+                                       s, sock->conn->pcb.ip->tos));
+           break;
+ #if LWIP_NETBUF_RECVINFO
++        case IP_RECVTOS:
++          LWIP_SOCKOPT_CHECK_OPTLEN_CONN_PCB_TYPE(sock, optlen, int,
++                                                  NETCONN_UDP);
++          sock->conn->recv_tos = !!*(const int *)optval;
++          break;
+         case IP_PKTINFO:
+           LWIP_SOCKOPT_CHECK_OPTLEN_CONN_PCB_TYPE(sock, optlen, int, NETCONN_UDP);
+           if (*(const int *)optval) {
+@@ -3707,6 +3813,19 @@ lwip_setsockopt_impl(int s, int level, int optname, const void *optval, socklen_
+           }
+           break;
+ #endif /* LWIP_IPV6 && LWIP_RAW */
++#if LWIP_NETBUF_RECVINFO
++      case IPV6_RECVPKTINFO:
++        LWIP_SOCKOPT_CHECK_OPTLEN_CONN_PCB_TYPE(sock, optlen, int, NETCONN_UDP);
++        if (*(const int *)optval)
++          sock->conn->flags |= NETCONN_FLAG_PKTINFO;
++        else
++          sock->conn->flags &= ~NETCONN_FLAG_PKTINFO;
++        break;
++      case IPV6_RECVTCLASS:
++        LWIP_SOCKOPT_CHECK_OPTLEN_CONN_PCB_TYPE(sock, optlen, int, NETCONN_UDP);
++        sock->conn->recv_tos = !!*(const int *)optval;
++        break;
++#endif
+       case IPV6_V6ONLY:
+           LWIP_SOCKOPT_CHECK_OPTLEN_CONN_PCB(sock, optlen, int);
+           if (*(const int *)optval) {
+diff --git a/src/include/lwip/api.h b/src/include/lwip/api.h
+index be8c22a..62a7483 100644
+--- a/src/include/lwip/api.h
++++ b/src/include/lwip/api.h
+@@ -216,6 +216,9 @@ typedef void (* netconn_callback)(struct netconn *, enum netconn_evt, u16_t len)
+ 
+ /** A netconn descriptor */
+ struct netconn {
++#if LWIP_NETBUF_RECVINFO
++  u8_t recv_tos;
++#endif
+   /** type of the netconn (TCP, UDP or RAW) */
+   enum netconn_type type;
+   /** current state of the netconn */
+diff --git a/src/include/lwip/netbuf.h b/src/include/lwip/netbuf.h
+index 42a911b..3cdf65f 100644
+--- a/src/include/lwip/netbuf.h
++++ b/src/include/lwip/netbuf.h
+@@ -55,6 +55,8 @@ extern "C" {
+ #define NETBUF_FLAG_DESTADDR    0x01
+ /** This netbuf includes a checksum */
+ #define NETBUF_FLAG_CHKSUM      0x02
++#define NETBUF_FLAG_TXINFO 0x04
++#define NETBUF_FLAG_TXTOS 0x08
+ 
+ /** "Network buffer" - contains data and addressing info */
+ struct netbuf {
+@@ -66,6 +68,9 @@ struct netbuf {
+   u16_t toport_chksum;
+ #if LWIP_NETBUF_RECVINFO
+   ip_addr_t toaddr;
++  ip_addr_t tx_src;
++  u8_t tx_ifindex;
++  u8_t tos;
+ #endif /* LWIP_NETBUF_RECVINFO */
+ #endif /* LWIP_NETBUF_RECVINFO || LWIP_CHECKSUM_ON_COPY */
+ };
