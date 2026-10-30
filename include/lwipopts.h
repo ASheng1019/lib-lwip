@@ -365,7 +365,6 @@ void sys_free(void *ptr);
 #define CHECKSUM_GEN_TCP     1
 #define CHECKSUM_CHECK_IP    1
 #define CHECKSUM_CHECK_UDP   1
-#define CHECKSUM_CHECK_TCP   1
 #define CHECKSUM_CHECK_ICMP  1
 #define CHECKSUM_CHECK_ICMP6 1
 #define CHECKSUM_CHECK_TCP   1

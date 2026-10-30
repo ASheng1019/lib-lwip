@@ -605,24 +605,11 @@ err_t uknetdev_init(struct netif *nf)
 		     __func__, nf->name[0], nf->name[1], nf->num, nf->flags));
 
 #if LWIP_CHECKSUM_CTRL_PER_NETIF
-	/*
-	 * Checksum settings
-	 * TODO: libuknetdev does not support checksum capabilities yet.
-	 *       Because of this, we need to calculate the checksum for every
-	 *       outgoing packet in software. We assume that we receive packets
-	 *       from a virtual interface, so the host was doing a check for us
-	 *       already. In case of guest-to-guest communication, the checksum
-	 *       field may be incorrect because the other guest expects that the
-	 *       host is offloading the calculation to hardware as soon as a
-	 *       packet leaves the physical host machine. At this point, the
-	 *       best we can do is not to check any checksums on incoming
-	 *       traffic and assume everything is fine.
+	/* This adapter does not consume RX checksum-offload metadata. Require
+	 * complete wire checksums and verify incoming packets in software.
+	 * Partial-checksum/GSO input must be disabled at the device boundary.
 	 */
-	NETIF_SET_CHECKSUM_CTRL(nf, (NETIF_CHECKSUM_GEN_IP
-				     | NETIF_CHECKSUM_GEN_UDP
-				     | NETIF_CHECKSUM_GEN_TCP
-				     | NETIF_CHECKSUM_GEN_ICMP
-				     | NETIF_CHECKSUM_GEN_ICMP6));
+	NETIF_SET_CHECKSUM_CTRL(nf, NETIF_CHECKSUM_ENABLE_ALL);
 	LWIP_DEBUGF(NETIF_DEBUG,
 		    ("%s: %c%c%u: chksum_flags: %"PRIx16"\n",
 		     __func__, nf->name[0], nf->name[1], nf->num,
