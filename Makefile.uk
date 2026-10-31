@@ -191,3 +191,5 @@ $(LIBLWIP_BUILD)/.pinned-patched: $(LIBLWIP_BUILD)/.patched
 	$(TOUCH) $@
 UK_FETCH-y += $(LIBLWIP_BUILD)/.pinned-patched
 endif
+
+LIBLWIP_SRCS-$(CONFIG_LWIP_IPV6_SETUP) += $(LIBLWIP_BASE)/ipv6.c|unikraft

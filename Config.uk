@@ -435,3 +435,12 @@ config LWIP_UKNETDEV_DEFER_STATUS_RX
 	  A callback in tcpip_thread must not fill its own receive mailbox.
 	  Wake the existing RX dispatcher to perform the initial queue drain.
 
+
+config LWIP_IPV6_SETUP
+	bool "Named-interface IPv6 setup helper"
+	depends on LIBLWIP && LWIP_IPV6 && LWIP_THREADS
+	default n
+	help
+		Configure a named Ethernet netif on the TCP/IP thread, with explicit
+		multicast-receive contract and bounded static/link-local DAD polling.
+		No addresses, interfaces or device capabilities are assumed by this helper.

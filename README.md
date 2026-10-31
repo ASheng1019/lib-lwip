@@ -55,3 +55,21 @@ independent ACK-deadline code or Kconfig setting. The separately retained
 dev/lwip-ack-deadline branch adds that policy for the measured application;
 it is not part of the initial port PRs. Existing upstream common adaptations,
 including its TIME_WAIT handling, are preserved and are not new policy claims.
+
+## Optional named-interface IPv6 setup
+
+LWIP_IPV6_SETUP (default n, threaded IPv6 builds only) provides
+`<uk/lwip-ipv6.h>` / `uk_lwip_ip6_configure()`. It configures only the interface
+named by the caller, runs netif operations on tcpip_thread, and waits for
+link-local/static DAD with bounded polling. It must be called from an
+application thread, never tcpip_thread. It does not choose a device, load
+application files, set a clock or expose any management protocol.
+
+UK_LWIP_IP6_RX_MULTICAST explicitly asserts the named interface receives IPv6
+multicast without a filter callback. It is not automatic uknetdev capability
+detection. UK_LWIP_IP6_SLAAC independently enables autoconfiguration; success
+does not mean a global SLAAC address has been acquired. The optional unicast
+address is applied to the selected netif. Duplicate addresses, missing/up-state
+interfaces, missing multicast support and timeout return negative errno;
+partial configuration is not rolled back. See the header for lifetime and
+thread constraints. This is direct port glue, not a third-party-source patch.
